@@ -11,6 +11,7 @@ import java.util.Base64;
 import java.util.Base64.Encoder;
 
 import javax.crypto.Mac;
+import javax.crypto.ShortBufferException;
 import javax.crypto.spec.SecretKeySpec;
 
 import org.apache.commons.codec.binary.Base32;
@@ -25,10 +26,12 @@ public class TOTPGenerator {
     private static final String HMAC_SHA1 = "HmacSHA1";
 
     private Mac mac;
+    private ByteBuffer buffer;
 
     public TOTPGenerator(){
         try {
             this.mac = Mac.getInstance(HMAC_SHA1);
+            this.buffer = ByteBuffer.allocate(mac.getMacLength());
         } catch (NoSuchAlgorithmException e) {
             e.printStackTrace(System.out);
         }
@@ -41,9 +44,11 @@ public class TOTPGenerator {
 
             String secretString = "TESTpasswordTESTpasswordT";
             String secret = new String(new Base32().encode(secretString.getBytes()));// This is configured in authenticator app
-            System.out.println("Base32 ==> " + secret);
+            System.out.println("Secret of Authenticator APP ==> " + secret);
 
+            System.out.println(String.format("===> %06d <===",totp.getOTP(secretString, Instant.now().minusSeconds(30))));
             System.out.println(String.format("===> %06d <===",totp.getOTP(secretString, Instant.now())));
+            System.out.println(String.format("===> %06d <===",totp.getOTP(secretString, Instant.now().plusSeconds(30))));
 
         } catch (IllegalStateException e) {
             e.printStackTrace();
@@ -51,15 +56,21 @@ public class TOTPGenerator {
         
     }
 
+    /**
+     * The buffer is 20 bytes long, we clear the buffer before reuse
+     * Put the counter at index zero through 8, as the the time steps is long
+     * @param secret
+     * @param instant
+     * @return
+     */
     public int getOTP(String secret,Instant instant) {
-        byte[] counterBytes  = ByteBuffer.allocate(8)
-                                    .putLong(0, getTimeStep(instant))
-                                    .array();
-        ByteBuffer hmac = getHMAC(secret, counterBytes);
-        printByteArrayAsHex("Hmac as hex ==> ",hmac.array());
-        final int offset = hmac.get(hmac.array().length - 1) & 0xf;
-        System.out.println("Offset ==> " + offset);
-        return ((hmac.getInt(offset) & 0x7FFFFFFF) % 1000000);
+        this.buffer.clear();
+        this.buffer.putLong(0,  getTimeStep(instant));
+        getHMAC(secret);
+        // printByteArrayAsHex("Hmac as hex ==> ",this.buffer.array());
+        final int offset = this.buffer.get(this.buffer.array().length - 1) & 0xf;
+        //System.out.println("Offset ==> " + offset);
+        return ((this.buffer.getInt(offset) & 0x7FFFFFFF) % 1000000);
     }
 
     private void printByteArrayAsHex(String marker, byte[] hmac) {
@@ -68,35 +79,43 @@ public class TOTPGenerator {
             int b = hmac[i] & 0xFF;
             sbuff.append(Integer.toHexString(b));
         }
-        System.out.println(marker + sbuff);
+        //System.out.println(marker + sbuff);
     }
 
-    public ByteBuffer getHMAC(String secret, byte[] counter) {
+    /**
+     * HMAC is calculated for 8 bytes which holds the time step using the secret
+     * calculated hmac is placed in the same buffer
+     * @param secret
+     */
+    private void getHMAC(String secret) {
         try {
             this.mac.init(getKey(secret));
-            System.out.println("Mac kength ==> " + mac.getMacLength());
-            return ByteBuffer.wrap( mac.doFinal(counter));
+            byte[] array = this.buffer.array();
+            this.mac.update(array, 0, 8);
+            mac.doFinal(array, 0);
         } catch (InvalidKeyException e) {
             e.printStackTrace();
+        } catch (ShortBufferException e) {
+            e.printStackTrace();
+        } catch (IllegalStateException e) {
+            e.printStackTrace();
         }
-        return null;
     }
 
-    public Key getKey(String secret) {
+    private Key getKey(String secret) {
         if(null==secret){
             return null;
         }
         byte[] keyBytes =  secret.getBytes();
         SecretKeySpec secretKeySpec = new SecretKeySpec(keyBytes, HMAC_SHA1);
         printByteArrayAsHex("Key Bytes ==> ", secretKeySpec.getEncoded());
-        // + " "+ secretKeySpec.getEncoded().length + " bytes <==");
         return secretKeySpec;
     }
 
-    public static long getTimeStep(Instant instant) {
-        System.out.println(instant);
+    public long getTimeStep(Instant instant) {
+       // System.out.println(instant);
         long counter = instant.toEpochMilli() / Duration.ofSeconds(TIME_STEP_30).toMillis();
-        System.out.println("Time step ==> " + counter);
+        //System.out.println("Time step ==> " + counter);
         return counter;
     }
 

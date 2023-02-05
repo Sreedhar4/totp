@@ -121,7 +121,7 @@ public class TOTPGenerator {
 
     public String generateSecret() {
         SecureRandom random = new SecureRandom();
-        byte bytes[] = new byte[16];
+        byte bytes[] = new byte[32];
         random.nextBytes(bytes);
         Encoder encoder = Base64.getUrlEncoder().withoutPadding();
         String token = encoder.encodeToString(bytes);
